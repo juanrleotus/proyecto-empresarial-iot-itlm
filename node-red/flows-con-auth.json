@@ -1,0 +1,514 @@
+[
+    {
+        "id": "tab-itlm-ca",
+        "type": "tab",
+        "label": "01 - IoT ITLM (broker CON autenticacion)",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "brk-itlm-ca",
+        "type": "mqtt-broker",
+        "name": "Mosquitto ITLM (auth)",
+        "broker": "192.168.1.33",
+        "port": "1883",
+        "clientid": "nodered-itlm",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "pg-itlm-ca",
+        "type": "postgreSQLConfig",
+        "name": "itlm_iot@localhost",
+        "host": "127.0.0.1",
+        "hostFieldType": "str",
+        "port": 5432,
+        "portFieldType": "num",
+        "database": "itlm_iot",
+        "databaseFieldType": "str",
+        "ssl": "false",
+        "sslFieldType": "bool",
+        "applicationName": "",
+        "applicationNameType": "str",
+        "max": 10,
+        "maxFieldType": "num",
+        "idle": 1000,
+        "idleFieldType": "num",
+        "connectionTimeout": 10000,
+        "connectionTimeoutFieldType": "num",
+        "user": "postgres",
+        "userFieldType": "str",
+        "password": "",
+        "passwordFieldType": "str"
+    },
+    {
+        "id": "cmt-ca",
+        "type": "comment",
+        "z": "tab-itlm-ca",
+        "name": "LEER PRIMERO - que hay que completar",
+        "info": "<h3>Proyecto Empresarial IoT ITLM</h3><b>MODO B: broker CON usuario y contrasena</b><br><br>Antes de pulsar Deploy hay que completar a mano:<br>1) Nodo <b>mqtt in</b> -&gt; lapiz del broker -&gt; pestana <b>Connection</b>: poner la IP real del servidor (aqui dice 192.168.1.33).<br>2) Misma ventana -&gt; pestana <b>Security</b>: usuario <code>nodered</code> y su contrasena de Mosquitto.<br>3) Nodos <b>PostgreSQL</b> -&gt; lapiz de la conexion: Host, Database <code>itlm_iot</code>, User y Password.<br><br>Las contrasenas NO se exportan en este archivo: por eso hay que escribirlas.",
+        "x": 200,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "mqtt-in-ca",
+        "type": "mqtt in",
+        "z": "tab-itlm-ca",
+        "name": "MQTT  empresa/#",
+        "topic": "empresa/#",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "brk-itlm-ca",
+        "nl": false,
+        "rap": true,
+        "rh": "0",
+        "inputs": 0,
+        "x": 160,
+        "y": 140,
+        "wires": [
+            [
+                "fn-guardar-ca",
+                "fn-alarmas-ca",
+                "dbg-mqtt-ca"
+            ]
+        ]
+    },
+    {
+        "id": "dbg-mqtt-ca",
+        "type": "debug",
+        "z": "tab-itlm-ca",
+        "name": "Ver lo que llega del broker",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 460,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "fn-guardar-ca",
+        "type": "function",
+        "z": "tab-itlm-ca",
+        "name": "Clasificar y guardar",
+        "func": "/* ============================================================\n   PROYECTO EMPRESARIAL IoT ITLM\n   Node-RED  -  Funcion \"Clasificar y guardar\"\n\n   ENTRADA : mensajes del nodo  mqtt in  suscrito a  empresa/#\n   SALIDA  : msg.query + msg.params para el nodo  postgresql\n\n   Que hace:\n     - descarta los topicos de comando (.../cmd)\n     - reconoce los topicos de sensores  -> tabla mediciones\n     - reconoce los topicos de actuadores -> tabla eventos\n     - reconoce los avisos de la camara   -> tabla eventos\n     - valida el dato antes de escribir en la base\n\n   Pegar en la pestana  \"En mensaje\"  (On Message) de un nodo\n   function con UNA sola salida.\n   ============================================================ */\n\n// ── 1. Lectura del mensaje ──────────────────────────────────\nconst topico = msg.topic;\nlet datos    = msg.payload;\n\nif (datos === null || datos === undefined || datos === \"\") {\n    node.warn(\"Mensaje MQTT vacio en: \" + topico);\n    return null;\n}\n\n// El nodo mqtt in puede entregar el contenido como Buffer\nif (Buffer.isBuffer(datos)) {\n    datos = datos.toString();\n}\n\n// Si llega como texto, interpretarlo como JSON\nif (typeof datos === \"string\") {\n    try {\n        datos = JSON.parse(datos);\n    } catch (error) {\n        // Caso tipico: una placa quedo publicando texto plano\n        // (\"24.8\") en lugar del JSON del proyecto.\n        node.warn(\"No es JSON en \" + topico + \" -> \" + datos +\n                  \"  (revisar el firmware de esa placa)\");\n        return null;\n    }\n}\n\n// ── 2. Los comandos NO se guardan ───────────────────────────\n// Node-RED esta suscrito a empresa/# y por lo tanto tambien ve\n// lo que la app publica en .../cmd. Eso es una orden, no un\n// dato medido: no va a la base.\nif (topico.endsWith(\"/cmd\")) {\n    node.status({ fill: \"grey\", shape: \"ring\", text: \"cmd ignorado\" });\n    return null;\n}\n\n// ── 3. Tabla de topicos de SENSORES ─────────────────────────\n// Agregar un sensor nuevo = agregar UNA linea aqui.\nconst SENSORES = {\n    \"empresa/planta/temperatura\":  { dispositivo: \"Planta\",  variable: \"temperatura\" },\n    \"empresa/planta/humedad\":      { dispositivo: \"Planta\",  variable: \"humedad\"     },\n    \"empresa/oficina/temperatura\": { dispositivo: \"Oficina\", variable: \"temperatura\" },\n    \"empresa/oficina/humedad\":     { dispositivo: \"Oficina\", variable: \"humedad\"     },\n    \"empresa/almacen/temperatura\": { dispositivo: \"Almacen\", variable: \"temperatura\" },\n    \"empresa/tanque/temperatura\":  { dispositivo: \"Tanque\",  variable: \"temperatura\" }\n};\n\n// ── 4. Tabla de topicos de ACTUADORES ───────────────────────\nconst ACTUADORES = {\n    \"empresa/planta/aire/estado\":   { dispositivo: \"Planta\",  actuador: \"aire\"   },\n    \"empresa/tanque/rele/estado\":   { dispositivo: \"Tanque\",  actuador: \"bomba\"  },\n    \"empresa/oficina/luces/estado\": { dispositivo: \"Oficina\", actuador: \"luces\"  },\n    \"empresa/camara/estado\":        { dispositivo: \"Almacen\", actuador: \"camara\" }\n};\n\n// ════════════════════════════════════════════════════════════\n//  CASO A: es un SENSOR  ->  tabla mediciones\n// ════════════════════════════════════════════════════════════\nif (SENSORES[topico]) {\n\n    const info  = SENSORES[topico];\n    const valor = Number(datos.v);\n\n    // Validacion: sin esto, un NaN o un texto rompe el INSERT\n    if (datos.v === undefined || datos.v === null || datos.v === \"\" ||\n        !Number.isFinite(valor)) {\n        node.warn(\"Medicion invalida en \" + topico + \": \" + JSON.stringify(datos));\n        return null;\n    }\n\n    // Rechazo de lecturas absurdas (sensor desconectado).\n    // El DS18B20 devuelve -127 cuando no responde.\n    if (valor < -50 || valor > 150) {\n        node.warn(\"Valor fuera de escala fisica en \" + topico + \": \" + valor);\n        return null;\n    }\n\n    const unidad = datos.u || (info.variable === \"humedad\" ? \"%\" : \"C\");\n\n    msg.query = `\n        INSERT INTO mediciones (dispositivo, variable, valor, unidad)\n        VALUES ($1, $2, $3, $4)\n        RETURNING id, fecha, dispositivo, variable, valor, unidad;\n    `;\n\n    msg.params = [info.dispositivo, info.variable, valor, unidad];\n\n    node.status({ fill: \"green\", shape: \"dot\",\n                  text: info.dispositivo + \" \" + info.variable + \" = \" + valor + unidad });\n    return msg;\n}\n\n// ════════════════════════════════════════════════════════════\n//  CASO B: es un ACTUADOR  ->  tabla eventos\n// ════════════════════════════════════════════════════════════\nif (ACTUADORES[topico]) {\n\n    const info   = ACTUADORES[topico];\n    const estado = String(datos.v || \"\").toUpperCase();\n\n    // El aire acondicionado tiene un tercer estado: ESPERA\n    // (proteccion de arranque corto del compresor).\n    if (![\"ON\", \"OFF\", \"ESPERA\"].includes(estado)) {\n        node.warn(\"Estado no reconocido en \" + topico + \": \" + JSON.stringify(datos));\n        return null;\n    }\n\n    // La camara agrega su IP y sus URL al estado: se guardan\n    // como detalle para saber donde estaba conectada.\n    let detalle = null;\n    if (datos.ip)    detalle = \"ip=\" + datos.ip;\n    if (datos.video) detalle = (detalle ? detalle + \" \" : \"\") + \"video=\" + datos.video;\n\n    msg.query = `\n        INSERT INTO eventos (dispositivo, actuador, estado, detalle)\n        VALUES ($1, $2, $3, $4)\n        RETURNING id, fecha, dispositivo, actuador, estado;\n    `;\n\n    msg.params = [info.dispositivo, info.actuador, estado, detalle];\n\n    node.status({ fill: \"blue\", shape: \"dot\",\n                  text: info.actuador + \" -> \" + estado });\n    return msg;\n}\n\n// ════════════════════════════════════════════════════════════\n//  CASO C: aviso de la camara  ->  tabla eventos\n//  Ejemplo de contenido:\n//    {\"v\":\"FOTO\",\"u\":\"evt\",\"ts\":123,\"url\":\"http://192.168.1.50/capture?t=123\"}\n// ════════════════════════════════════════════════════════════\nif (topico === \"empresa/camara/evento\") {\n\n    const evento = String(datos.v || \"EVENTO\").toUpperCase();\n    const url    = datos.url || null;\n\n    msg.query = `\n        INSERT INTO eventos (dispositivo, actuador, estado, detalle)\n        VALUES ($1, $2, $3, $4)\n        RETURNING id, fecha, dispositivo, actuador, estado, detalle;\n    `;\n\n    msg.params = [\"Almacen\", \"camara\", evento, url];\n\n    node.status({ fill: \"yellow\", shape: \"dot\", text: \"camara: \" + evento });\n    return msg;\n}\n\n// ════════════════════════════════════════════════════════════\n//  CASO D: topico desconocido\n//  No es un error del sistema: puede ser una placa nueva o un\n//  topico de prueba. Se avisa y no se guarda nada.\n// ════════════════════════════════════════════════════════════\nnode.status({ fill: \"grey\", shape: \"ring\", text: \"topico sin uso\" });\nnode.warn(\"Topico no contemplado: \" + topico);\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 160,
+        "wires": [
+            [
+                "pg-guardar-ca"
+            ]
+        ]
+    },
+    {
+        "id": "pg-guardar-ca",
+        "type": "postgresql",
+        "z": "tab-itlm-ca",
+        "name": "Guardar en PostgreSQL",
+        "query": "",
+        "postgreSQLConfig": "pg-itlm-ca",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 680,
+        "y": 160,
+        "wires": [
+            [
+                "dbg-guardar-ca"
+            ]
+        ]
+    },
+    {
+        "id": "dbg-guardar-ca",
+        "type": "debug",
+        "z": "tab-itlm-ca",
+        "name": "Fila insertada",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 930,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "fn-alarmas-ca",
+        "type": "function",
+        "z": "tab-itlm-ca",
+        "name": "Detectar alarmas",
+        "func": "/* ============================================================\n   PROYECTO EMPRESARIAL IoT ITLM\n   Node-RED  -  Funcion \"Detectar alarmas\"\n\n   ENTRADA : mensajes del nodo  mqtt in  suscrito a  empresa/#\n   SALIDA  : msg.query + msg.params para el nodo  postgresql\n             (tabla alarmas)\n\n   Criterio: no se guarda una alarma por cada medicion fuera de\n   rango -- a 5 segundos por muestra serian 720 filas por hora.\n   Se guarda solo el CAMBIO de estado: cuando la variable entra\n   en alarma y cuando se normaliza. El estado anterior se\n   recuerda en el contexto del flujo.\n\n   Pegar en la pestana \"En mensaje\" (On Message) de un nodo\n   function con UNA sola salida.\n   ============================================================ */\n\n// ── Limites de proceso ──────────────────────────────────────\n// Ajustar a la realidad de la instalacion. Son los valores que\n// definen el \"funcionamiento normal\" del sistema.\nconst LIMITES = {\n    \"empresa/planta/temperatura\":  { dispositivo: \"Planta\",  variable: \"temperatura\", min: 5,  max: 35 },\n    \"empresa/planta/humedad\":      { dispositivo: \"Planta\",  variable: \"humedad\",     min: 20, max: 80 },\n    \"empresa/oficina/temperatura\": { dispositivo: \"Oficina\", variable: \"temperatura\", min: 16, max: 30 },\n    \"empresa/oficina/humedad\":     { dispositivo: \"Oficina\", variable: \"humedad\",     min: 20, max: 80 },\n    \"empresa/almacen/temperatura\": { dispositivo: \"Almacen\", variable: \"temperatura\", min: 2,  max: 25 },\n    \"empresa/tanque/temperatura\":  { dispositivo: \"Tanque\",  variable: \"temperatura\", min: 4,  max: 45 }\n};\n\nconst topico = msg.topic;\nconst limite = LIMITES[topico];\n\nif (!limite) return null;          // topico sin limites definidos\n\n// ── Lectura del valor ───────────────────────────────────────\nlet datos = msg.payload;\nif (Buffer.isBuffer(datos)) datos = datos.toString();\nif (typeof datos === \"string\") {\n    try { datos = JSON.parse(datos); } catch (e) { return null; }\n}\n\nconst valor = Number(datos && datos.v);\nif (!Number.isFinite(valor)) return null;\n\n// ── Estado anterior de esta variable ────────────────────────\n// flow.get / flow.set conservan el dato entre mensajes.\nconst clave     = \"alarma_\" + topico;\nconst enAlarmaAntes = flow.get(clave) || false;\n\nlet enAlarmaAhora = false;\nlet mensaje       = \"\";\nlet limiteVulnerado = null;\n\nif (valor > limite.max) {\n    enAlarmaAhora   = true;\n    limiteVulnerado = limite.max;\n    mensaje = \"ALTA: \" + limite.variable + \" de \" + limite.dispositivo +\n              \" = \" + valor + \" (maximo \" + limite.max + \")\";\n} else if (valor < limite.min) {\n    enAlarmaAhora   = true;\n    limiteVulnerado = limite.min;\n    mensaje = \"BAJA: \" + limite.variable + \" de \" + limite.dispositivo +\n              \" = \" + valor + \" (minimo \" + limite.min + \")\";\n}\n\n// ── Solo se registra el CAMBIO de estado ────────────────────\nif (enAlarmaAhora === enAlarmaAntes) {\n    node.status({ fill: enAlarmaAhora ? \"red\" : \"green\",\n                  shape: \"ring\",\n                  text: enAlarmaAhora ? \"en alarma\" : \"normal\" });\n    return null;\n}\n\nflow.set(clave, enAlarmaAhora);\n\nif (!enAlarmaAhora) {\n    // Normalizacion: tambien es informacion util.\n    mensaje = \"NORMALIZADA: \" + limite.variable + \" de \" +\n              limite.dispositivo + \" = \" + valor;\n    limiteVulnerado = null;\n}\n\nmsg.query = `\n    INSERT INTO alarmas (dispositivo, variable, valor, limite, mensaje)\n    VALUES ($1, $2, $3, $4, $5)\n    RETURNING id, fecha, mensaje;\n`;\n\nmsg.params = [limite.dispositivo, limite.variable, valor, limiteVulnerado, mensaje];\n\nnode.status({ fill: enAlarmaAhora ? \"red\" : \"green\", shape: \"dot\", text: mensaje });\nnode.warn(mensaje);\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 240,
+        "wires": [
+            [
+                "pg-alarma-ca"
+            ]
+        ]
+    },
+    {
+        "id": "pg-alarma-ca",
+        "type": "postgresql",
+        "z": "tab-itlm-ca",
+        "name": "Guardar alarma",
+        "query": "",
+        "postgreSQLConfig": "pg-itlm-ca",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 670,
+        "y": 240,
+        "wires": [
+            [
+                "dbg-alarma-ca"
+            ]
+        ]
+    },
+    {
+        "id": "dbg-alarma-ca",
+        "type": "debug",
+        "z": "tab-itlm-ca",
+        "name": "Alarma registrada",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 930,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "inj-test-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Probar la base",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 170,
+        "y": 340,
+        "wires": [
+            [
+                "pg-test-ca"
+            ]
+        ]
+    },
+    {
+        "id": "pg-test-ca",
+        "type": "postgresql",
+        "z": "tab-itlm-ca",
+        "name": "SELECT de prueba",
+        "query": "SELECT dispositivo, variable, valor, unidad, fecha\nFROM   v_ultimos_valores\nORDER  BY dispositivo, variable;",
+        "postgreSQLConfig": "pg-itlm-ca",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 420,
+        "y": 340,
+        "wires": [
+            [
+                "dbg-test-ca"
+            ]
+        ]
+    },
+    {
+        "id": "dbg-test-ca",
+        "type": "debug",
+        "z": "tab-itlm-ca",
+        "name": "Ultimos valores",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "cmt2-ca",
+        "type": "comment",
+        "z": "tab-itlm-ca",
+        "name": "Probar los actuadores sin la app del celular",
+        "info": "Cada boton publica un comando en su topico. La placa debe responder con su estado retenido.",
+        "x": 240,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "inj-cmd0-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Aire ON",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/planta/aire/cmd",
+        "payload": "ON",
+        "payloadType": "str",
+        "x": 170,
+        "y": 470,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "inj-cmd1-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Aire OFF",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/planta/aire/cmd",
+        "payload": "OFF",
+        "payloadType": "str",
+        "x": 170,
+        "y": 510,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "inj-cmd2-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Bomba ON",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/tanque/rele/cmd",
+        "payload": "ON",
+        "payloadType": "str",
+        "x": 170,
+        "y": 550,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "inj-cmd3-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Bomba OFF",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/tanque/rele/cmd",
+        "payload": "OFF",
+        "payloadType": "str",
+        "x": 170,
+        "y": 590,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "inj-cmd4-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Luces ON",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/oficina/luces/cmd",
+        "payload": "ON",
+        "payloadType": "str",
+        "x": 170,
+        "y": 630,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "inj-cmd5-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Luces OFF",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/oficina/luces/cmd",
+        "payload": "OFF",
+        "payloadType": "str",
+        "x": 170,
+        "y": 670,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "inj-cmd6-ca",
+        "type": "inject",
+        "z": "tab-itlm-ca",
+        "name": "Camara FOTO",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "empresa/camara/cmd",
+        "payload": "FOTO",
+        "payloadType": "str",
+        "x": 170,
+        "y": 710,
+        "wires": [
+            [
+                "mqtt-out-ca"
+            ]
+        ]
+    },
+    {
+        "id": "mqtt-out-ca",
+        "type": "mqtt out",
+        "z": "tab-itlm-ca",
+        "name": "Publicar comando",
+        "topic": "",
+        "qos": "0",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "brk-itlm-ca",
+        "x": 460,
+        "y": 590,
+        "wires": []
+    }
+]

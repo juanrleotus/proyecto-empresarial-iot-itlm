@@ -1,0 +1,22 @@
+# ── CREDENCIALES: nunca subir al repositorio ──
+firmware/**/credenciales.h
+broker/passwd
+broker/*.log
+.env
+
+# ── Node-RED ──
+flows_cred.json
+node_modules/
+
+# ── Datos generados ──
+scripts/registros/
+*.csv
+*.db
+
+# ── Power BI ──
+*.pbix.bak
+
+# ── Sistema ──
+.DS_Store
+Thumbs.db
+desktop.ini

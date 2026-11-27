@@ -1,0 +1,76 @@
+# ============================================================
+#  PROYECTO EMPRESARIAL IoT ITLM
+#  Lista de control de acceso (ACL) para Mosquitto
+# ------------------------------------------------------------
+#  Copiar como:
+#    Windows -> C:\Program Files\mosquitto\aclfile   (sin extension)
+#    Linux   -> /etc/mosquitto/aclfile
+#
+#  Sintaxis:
+#    user <nombre>      abre la seccion de ese usuario
+#    topic read  <t>    puede SUSCRIBIRSE a <t>
+#    topic write <t>    puede PUBLICAR en <t>
+#    topic readwrite <t>  ambas
+#  Comodines:  +  un nivel      #  todos los niveles restantes
+#
+#  Regla de oro: cada placa escribe SOLO sus propios topicos y
+#  lee SOLO su topico de comando. Asi un error de programacion
+#  en una placa no puede pisar los datos de otra.
+# ============================================================
+
+# ── Placa 1: ESP32 DevKit  (Planta: DHT11 + aire acondicionado)
+user esp32planta
+topic write empresa/planta/temperatura
+topic write empresa/planta/humedad
+topic write empresa/planta/aire/estado
+topic read  empresa/planta/aire/cmd
+
+# ── Placa 2: ESP8266 NodeMCU  (Tanque: DS18B20 + bomba)
+user esp8266tanque
+topic write empresa/tanque/temperatura
+topic write empresa/tanque/rele/estado
+topic read  empresa/tanque/rele/cmd
+
+# ── Placa 3: ESP32-S3-WROOM  (Oficina: DHT11 + luces)
+user esp32s3oficina
+topic write empresa/oficina/temperatura
+topic write empresa/oficina/humedad
+topic write empresa/oficina/luces/estado
+topic read  empresa/oficina/luces/cmd
+
+# ── Placa 4: ESP32-CAM AI Thinker  (Almacen: camara)
+user esp32cam
+topic write empresa/camara/estado
+topic write empresa/camara/evento
+topic write empresa/almacen/temperatura
+topic read  empresa/camara/cmd
+
+# ── Node-RED: lee todo (para guardar en PostgreSQL)
+user nodered
+topic read empresa/#
+
+# ── App del celular (App Inventor / Android Studio):
+#    lee los sensores y escribe SOLO los comandos.
+user appmovil
+topic read  empresa/planta/temperatura
+topic read  empresa/planta/humedad
+topic read  empresa/oficina/temperatura
+topic read  empresa/oficina/humedad
+topic read  empresa/almacen/temperatura
+topic read  empresa/tanque/temperatura
+topic read  empresa/planta/aire/estado
+topic read  empresa/tanque/rele/estado
+topic read  empresa/oficina/luces/estado
+topic read  empresa/camara/estado
+topic read  empresa/camara/evento
+topic write empresa/planta/aire/cmd
+topic write empresa/tanque/rele/cmd
+topic write empresa/oficina/luces/cmd
+topic write empresa/camara/cmd
+
+# ── Docente / diagnostico con MQTT Explorer: acceso total
+user docente
+topic readwrite #
+
+# ── Clientes anonimos: nada.
+#    (con allow_anonymous false no llegan a conectarse)
