@@ -2,6 +2,7 @@
    PROYECTO EMPRESARIAL IoT ITLM
    PLACA 1 - ESP32 DevKit v1  ->  SECTOR "PLANTA"
 
+
    Mide:    temperatura y humedad con DHT11
    Controla: aire acondicionado por rele (salida digital)
 
